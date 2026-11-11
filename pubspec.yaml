@@ -1,0 +1,32 @@
+name: bitflow_web
+description: "A new Flutter project."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.11.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  clipboard: ^0.1.3
+  path: ^1.9.1
+  url_launcher: ^6.3.1
+  file_picker: ^10.2.0
+  http: ^1.4.0
+  shared_preferences: ^2.5.3
+  package_info_plus: ^8.3.0
+  get: ^4.7.2
+  font_awesome_flutter: ^10.8.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/

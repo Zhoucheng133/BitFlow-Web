@@ -1,0 +1,374 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:bitflow_web/components/dialogs.dart';
+import 'package:bitflow_web/getx/status_get.dart';
+import 'package:bitflow_web/getx/store_get.dart';
+import 'package:bitflow_web/service/aria.dart';
+import 'package:bitflow_web/service/qbit.dart';
+import 'package:bitflow_web/service/trans.dart';
+import 'package:bitflow_web/types/store_item.dart';
+import 'package:bitflow_web/types/task_item.dart';
+import 'package:flutter/material.dart';
+import 'package:get/get.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+bool isDesktop(BuildContext context){
+  double screenWidth = MediaQuery.of(context).size.width;
+  if(screenWidth<600){
+    return false;
+  }
+  return true;
+}
+
+class FuncsService extends GetxController{
+  late SharedPreferences prefs;
+  late Timer interval;
+  final StoreGet storeGet=Get.find();
+  final StatusGet statusGet=Get.find();
+  final AriaService ariaService=Get.find();
+  final QbitService qbitService=Get.find();
+  final TransmissionService transmissionService=Get.find();
+
+  late Worker pageListener;
+  late Worker serverListener;
+  late Worker selectListener;
+
+  String convertType(StoreType type){
+    switch (type) {
+      case StoreType.aria:
+        return "Aria";
+      case StoreType.qbit:
+        return "qBittorrent";
+      case StoreType.transmission:
+        return "Transmission";
+    }
+  }
+
+  FuncsService(){
+    pageListener=ever(statusGet.page, (_) async {
+      statusGet.selectMode.value=false;
+      statusGet.loadOk.value=false;
+      await getTasks();
+    });
+
+    serverListener=ever(statusGet.sevrerIndex, (_) async {
+      statusGet.selectMode.value=false;
+      statusGet.loadOk.value=false;
+      statusGet.activeTasks.value=[];
+      statusGet.finishedTask.value=[];
+      if(storeGet.servers[statusGet.sevrerIndex.value].type==StoreType.qbit){
+        qbitService.cookie.value=(await qbitService.getCookie(storeGet.servers[statusGet.sevrerIndex.value]))??"";
+      }
+      await getTasks();
+    });
+
+    selectListener=ever(statusGet.selectMode, (bool select){
+      if(!select){
+        statusGet.selectList.value=[];
+      }
+    });
+  }
+
+  @override
+  void onClose() {
+    super.onClose();
+    pageListener.dispose();
+    serverListener.dispose();
+    selectListener.dispose();
+  }
+
+  Future<void> initStore(BuildContext context) async {
+    if(storeGet.servers.isEmpty){
+      await addStore(context, init: true);
+    }
+  }
+
+  List<String> splitUrls(String url){
+    return url.split("\n");
+  }
+
+  void addTaskHandler(String url){
+    switch (storeGet.servers[statusGet.sevrerIndex.value].type) {
+      case StoreType.aria:
+        for(String urlItem in splitUrls(url)){
+          ariaService.addTask(urlItem, storeGet.servers[statusGet.sevrerIndex.value]);
+        }
+        break;
+      case StoreType.qbit:
+        for(String urlItem in splitUrls(url)){
+          qbitService.addTask(urlItem, storeGet.servers[statusGet.sevrerIndex.value]);
+        }
+        break;
+      case StoreType.transmission:
+        for(String urlItem in splitUrls(url)){
+          transmissionService.addTask(urlItem, storeGet.servers[statusGet.sevrerIndex.value]);
+        }
+        break;
+    }
+    getTasks();
+  }
+
+  Future<void> addTorrentTaskHandler(String filePath) async {
+    switch (storeGet.servers[statusGet.sevrerIndex.value].type) {
+      case StoreType.aria:
+        File file = File(filePath);
+        final bytes = await file.readAsBytes();
+        final base64Torrent = base64Encode(bytes);
+        ariaService.addTorrentTask(base64Torrent, storeGet.servers[statusGet.sevrerIndex.value]);
+        break;
+      case StoreType.qbit:
+        qbitService.addTorrentTask(filePath, storeGet.servers[statusGet.sevrerIndex.value]);
+        break;
+      case StoreType.transmission:
+        File file = File(filePath);
+        final bytes = await file.readAsBytes();
+        final base64Torrent = base64Encode(bytes);
+        transmissionService.addTorrentTask(base64Torrent, storeGet.servers[statusGet.sevrerIndex.value]);
+        break;
+    }
+  }
+
+  Future<void> getTasks() async {
+    final targetPage = statusGet.page.value;
+    List<TaskItem> tasks = [];
+    switch (storeGet.servers[statusGet.sevrerIndex.value].type) {
+      case StoreType.aria:
+        tasks = await ariaService.getTasks(targetPage, storeGet.servers[statusGet.sevrerIndex.value]);
+        break;
+      case StoreType.qbit:
+        tasks = await qbitService.getTasks(targetPage, storeGet.servers[statusGet.sevrerIndex.value]);
+        break;
+      case StoreType.transmission:
+        tasks = await transmissionService.getTasks(targetPage, storeGet.servers[statusGet.sevrerIndex.value]);
+        break;
+    }
+    if (statusGet.page.value != targetPage) {
+      return;
+    }
+    statusGet.makeTasks(tasks, storeGet.servers[statusGet.sevrerIndex.value].type);
+    statusGet.loadOk.value=true;
+  }
+
+  Future<void> delAllFinishedTasks(BuildContext context) async {
+    bool confirm=await showConfirmDialog(context, "deleteAllFinishedTask".tr, "deleteAllFinishedTaskContent".tr, okText: 'delete'.tr);
+    if(!confirm){
+      return;
+    }
+    switch (storeGet.servers[statusGet.sevrerIndex.value].type) {
+      case StoreType.aria:
+        ariaService.clearFinished(storeGet.servers[statusGet.sevrerIndex.value]);
+        break;
+      case StoreType.qbit:
+        final List<String> finishedList=statusGet.finishedTask.map((item)=>item.id).toList();
+        final hashes=finishedList.join('|');
+        qbitService.delFinishedTask(storeGet.servers[statusGet.sevrerIndex.value], hashes);
+        break;
+      case StoreType.transmission:
+        final List<String> finishedList=statusGet.finishedTask.map((item)=>item.id).toList();
+        transmissionService.delFinishedTask(storeGet.servers[statusGet.sevrerIndex.value], finishedList);
+        break;
+    }
+    getTasks();
+  }
+
+  Future<void> delSelected(BuildContext context, Pages page) async {
+    if(statusGet.selectList.isEmpty){
+      await showErrWarnDialog(context, "invalidOperation".tr, "noTaskSelected".tr);
+      return;
+    }
+    bool confirm=await showConfirmDialog(context, "deleteSelectedTask".tr, "deleteSelectedTaskContent".tr, okText: 'delete'.tr);
+    if(!confirm) return;
+    switch (storeGet.servers[statusGet.sevrerIndex.value].type) {
+      case StoreType.aria:
+        for (var item in statusGet.selectList) {
+          if(page==Pages.active){
+            await ariaService.delActiveTask(item.id, storeGet.servers[statusGet.sevrerIndex.value]);
+          }else if(page==Pages.finish){
+            await ariaService.delFinishedTask(item.id, storeGet.servers[statusGet.sevrerIndex.value]);
+          }
+        }
+        break;
+      case StoreType.qbit:
+        final String hashes=statusGet.selectList.map((item)=>item.id).toList().join('|');
+        if(context.mounted){
+          final delFile=await showConfirmDialog(context, "deleteFile".tr, "deleteFileContent".tr, okText: 'deleteFile'.tr);
+          await qbitService.delActiveTask(storeGet.servers[statusGet.sevrerIndex.value], hashes, delFile: delFile);
+        }
+        break;
+      case StoreType.transmission:
+        List<String> ids=statusGet.selectList.map((item)=>item.id).toList();
+        await transmissionService.delActiveTask(storeGet.servers[statusGet.sevrerIndex.value], ids);
+        break;
+    }
+    getTasks();
+    statusGet.selectMode.value=false;
+  }
+
+  Future<void> multiContinue(BuildContext context) async {
+    if(statusGet.selectList.isEmpty){
+      await showErrWarnDialog(context, "invalidOperation".tr, "noTaskSelected".tr);
+      return;
+    }
+    switch (storeGet.servers[statusGet.sevrerIndex.value].type) {
+      case StoreType.aria:
+        for (var item in statusGet.selectList) {
+          await item.continueTask();
+        }
+        break;
+      case StoreType.qbit:
+        final String hashes=statusGet.selectList.map((item)=>item.id).toList().join('|');
+        await qbitService.continueTask(storeGet.servers[statusGet.sevrerIndex.value], hashes);
+        break;
+      case StoreType.transmission:
+        final List<String> ids=statusGet.selectList.map((item)=>item.id).toList();
+        await transmissionService.continueTask(storeGet.servers[statusGet.sevrerIndex.value], ids);
+        break;
+    }
+    getTasks();
+    statusGet.selectMode.value=false;
+  }
+
+  Future<void> multiPause(BuildContext context) async {
+    if(statusGet.selectList.isEmpty){
+      await showErrWarnDialog(context, "invalidOperation".tr, "noTaskSelected".tr);
+      return;
+    }
+    switch (storeGet.servers[statusGet.sevrerIndex.value].type) {
+      case StoreType.aria:
+        for (var item in statusGet.selectList) {
+          await item.pauseTask();
+        }
+        break;
+      case StoreType.qbit:
+        final String hashes=statusGet.selectList.map((item)=>item.id).toList().join('|');
+        await qbitService.pauseTask(storeGet.servers[statusGet.sevrerIndex.value], hashes);
+        break;
+      case StoreType.transmission:
+        final List<String> ids=statusGet.selectList.map((item)=>item.id).toList();
+        await transmissionService.pauseTask(storeGet.servers[statusGet.sevrerIndex.value], ids);
+        break;
+    }
+    getTasks();
+    statusGet.selectMode.value=false;
+  }
+
+  Future<void> pauseAll(BuildContext context) async {
+    bool confirm=await showConfirmDialog(context, "pauseAll".tr, "pauseAllContent".tr, okText: "pause".tr);
+    if(!confirm) return;
+    switch (storeGet.servers[statusGet.sevrerIndex.value].type) {
+      case StoreType.aria:
+        for (var item in statusGet.activeTasks) {
+          await item.pauseTask();
+        }
+        break;
+      case StoreType.qbit:
+        final String hashes=statusGet.activeTasks.map((item)=>item.id).toList().join('|');
+        await qbitService.pauseTask(storeGet.servers[statusGet.sevrerIndex.value], hashes);
+        break;
+      case StoreType.transmission:
+        final List<String> ids=statusGet.activeTasks.map((item)=>item.id).toList();
+        await transmissionService.pauseTask(storeGet.servers[statusGet.sevrerIndex.value], ids);
+        break;
+    }
+    getTasks();
+  }
+
+  Future<void> continueAll(BuildContext context) async {
+    bool confirm=await showConfirmDialog(context, "resumeAll".tr, "resumeAllContent".tr, okText: "resume".tr);
+    if(!confirm) return;
+    switch (storeGet.servers[statusGet.sevrerIndex.value].type) {
+      case StoreType.aria:
+        for (var item in statusGet.activeTasks) {
+          await item.continueTask();
+        }
+        break;
+      case StoreType.qbit:
+        final String hashes=statusGet.activeTasks.map((item)=>item.id).toList().join('|');
+        await qbitService.continueTask(storeGet.servers[statusGet.sevrerIndex.value], hashes);
+        break;
+      case StoreType.transmission:
+        final List<String> ids=statusGet.activeTasks.map((item)=>item.id).toList();
+        await transmissionService.continueTask(storeGet.servers[statusGet.sevrerIndex.value], ids);
+        break;
+    }
+    getTasks();
+  }
+
+  Future<void> reDownloadSelected(BuildContext context) async {
+    if(statusGet.selectList.isEmpty){
+      await showErrWarnDialog(context, "invalidOperation".tr, "noTaskSelected".tr);
+      return;
+    }
+    bool confirm=await showConfirmDialog(context, "redownloadSelected".tr, "redownloadSelectedContent".tr, okText: "continue".tr);
+    if(!confirm) return;
+    switch (storeGet.servers[statusGet.sevrerIndex.value].type) {
+      case StoreType.aria:
+        for (var item in statusGet.selectList) {
+          await ariaService.delFinishedTask(item.id, storeGet.servers[statusGet.sevrerIndex.value]);
+          await ariaService.addTask(item.link, storeGet.servers[statusGet.sevrerIndex.value]);
+        }
+        break;
+      case StoreType.qbit:
+        final String hashes=statusGet.selectList.map((item)=>item.id).toList().join('|');
+        await qbitService.delFinishedTask(storeGet.servers[statusGet.sevrerIndex.value], hashes, delFile: true);
+        for(TaskItem item in statusGet.selectList){
+          await qbitService.addTask(item.link, storeGet.servers[statusGet.sevrerIndex.value]);
+        }
+        break;
+      case StoreType.transmission:
+        final List<String> ids=statusGet.selectList.map((item)=>item.id).toList();
+        await transmissionService.delFinishedTask(storeGet.servers[statusGet.sevrerIndex.value], ids, delFile: true);
+        for(TaskItem item in statusGet.selectList){
+          await transmissionService.addTask(item.link, storeGet.servers[statusGet.sevrerIndex.value]);
+        }
+        break;
+    }
+    getTasks();
+    statusGet.selectMode.value=false;
+  }
+  
+  Future<void> init(BuildContext context) async {
+    prefs=await SharedPreferences.getInstance();
+    if(storeGet.servers.isNotEmpty){
+      String? check;
+      switch (storeGet.servers[statusGet.sevrerIndex.value].type) {
+        case StoreType.aria:
+          check=await ariaService.getVersion(storeGet.servers[statusGet.sevrerIndex.value]);
+          break;
+        case StoreType.qbit:
+          check=await qbitService.getCookie(storeGet.servers[statusGet.sevrerIndex.value]);
+          break;
+        case StoreType.transmission:
+          check=await transmissionService.check(storeGet.servers[statusGet.sevrerIndex.value])==true ? "ok" : null;
+          break;
+      }
+      if(check==null){
+        if(context.mounted){
+          await showErrWarnDialog(
+            context, 
+            "requestErr".tr, 
+            "${'request'.tr} ${convertType(storeGet.servers[statusGet.sevrerIndex.value].type)} ${'err'.tr}"
+          );
+        }
+        return;
+      }
+
+      interval= Timer.periodic(Duration(milliseconds: storeGet.freq.value), (Timer time){
+        getTasks();
+      });
+    }else{
+      await initStore(Get.context!);
+    }
+  }
+
+  void reLoadService(){
+    interval.cancel();
+    if(storeGet.servers.isNotEmpty){
+      interval= Timer.periodic(Duration(milliseconds: storeGet.freq.value), (Timer time){
+        getTasks();
+      });
+    }
+  }
+}

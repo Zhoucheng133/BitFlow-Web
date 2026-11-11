@@ -1,0 +1,158 @@
+import 'dart:convert';
+
+import 'package:bitflow_web/components/add_store.dart';
+import 'package:bitflow_web/components/dialogs.dart';
+import 'package:bitflow_web/getx/status_get.dart';
+import 'package:bitflow_web/service/aria.dart';
+import 'package:bitflow_web/service/funcs.dart';
+import 'package:bitflow_web/service/qbit.dart';
+import 'package:bitflow_web/types/store_item.dart';
+import 'package:flutter/material.dart';
+import 'package:get/get.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+Future<void> addStore(BuildContext context, {init=false}) async {
+
+  final StoreGet storeGet=Get.find();
+  final FuncsService funcsService=Get.find();
+
+  StoreItem item=StoreItem("", StoreType.aria, "", null, "");
+  bool load=false;
+  void setVal(StoreItem val){
+    item = StoreItem(val.name, val.type, val.url, val.type==StoreType.aria ? null : val.username, val.password);
+  }
+
+  await showDialog(
+    context: context, 
+    barrierDismissible: false,
+    builder: (context)=>StatefulBuilder(
+      builder: (context, setState)  {
+        return AlertDialog(
+          title: Text(
+            'addDownloader'.tr,
+          ),
+          content: SizedBox(
+            width: 400,
+            child: AddStore(valCallback: setVal,)
+          ),
+          actions: [
+            TextButton(
+              onPressed: init ? null : () => Navigator.pop(context), 
+              child: Text("cancel".tr)
+            ),
+            ElevatedButton(
+              onPressed: load ? null : () async {
+                if(storeGet.servers.any((element) => element.name==item.name)){
+                  showErrWarnDialog(context, "addFailed".tr, "duplicateName".tr);
+                  return;
+                }
+                setState((){
+                  load=true;
+                });
+                bool checked=await item.checkItem();
+                if(checked){
+                  storeGet.servers.add(item);
+                  await storeGet.saveStore();
+                  if(init){
+                    funcsService.init(Get.context!);
+                  }
+                  if(context.mounted) Navigator.pop(context);
+                }else{
+                  if(context.mounted) showErrWarnDialog(context, "connectFailed".tr, "checkDownloader".tr);
+                }
+                setState((){
+                  load=false;
+                });
+              }, 
+              child: Text("add".tr)
+            )
+          ],
+        );
+      }
+    )
+  );
+}
+
+class StoreGet extends GetxController{
+  final AriaService ariaService=Get.find();
+  final QbitService qbitService=Get.find();
+  final StatusGet statusGet=Get.find();
+  RxList<StoreItem> servers = <StoreItem>[].obs;
+  RxInt starIndex=0.obs;
+
+  // 默认在活跃页面，新的在后，旧的在前
+  Rx<OrderTypes> defaultActiveOrder=OrderTypes.addOld.obs;
+  // 默认在已完成页面，新的在前，旧的在后
+  Rx<OrderTypes> defaultFinishOrder=OrderTypes.addNew.obs;
+
+  // 菜单栏宽度
+  RxDouble sidebarWidth=150.0.obs;
+
+  // 更新频率 (单位: 毫秒)
+  RxInt freq=1500.obs;
+
+  late SharedPreferences prefs;
+
+  Future<void> init() async {
+    prefs=await SharedPreferences.getInstance();
+    final storePrefs=prefs.getString('store');
+    if(storePrefs!=null){
+      try {
+        List<StoreItem> store=(jsonDecode(storePrefs) as List).map((item)=>StoreItem(item['name'], StoreType.values[item['type']], item['url'], item['username'], item['password'])).toList();
+        servers.value=store;
+        statusGet.initOk.value=true;
+      } catch (_) {}
+    }
+    final starPrefs=prefs.getInt("star");
+    if(starPrefs!=null && starPrefs<servers.length){
+      starIndex.value=starPrefs;
+      statusGet.sevrerIndex.value=starPrefs;
+    }
+    int? activeOrder=prefs.getInt("defaultActiveOrder");
+    int? finishedOrder=prefs.getInt("defaultFinishOrder");
+     if(activeOrder!=null){
+      statusGet.activeOrder.value=OrderTypes.values[activeOrder];
+      defaultActiveOrder.value=OrderTypes.values[activeOrder];
+    }
+    if(finishedOrder!=null){
+      statusGet.finishOrder.value=OrderTypes.values[finishedOrder];
+      defaultFinishOrder.value=OrderTypes.values[finishedOrder];
+    }
+    final int? freq=prefs.getInt("freq");
+    if(freq!=null){
+      this.freq.value=freq;
+    }
+    sidebarWidth.value=prefs.getDouble("sidebarWidth")??150.0;
+  }
+
+  void saveSideBarWidth(double width) async {
+    prefs.setDouble("sidebarWidth", width);
+    sidebarWidth.value=width;
+  }
+
+  Future<void> saveStore() async {
+    prefs.setString("store", jsonEncode(servers.map((item)=>item.toMap()).toList()));
+  }
+
+  Future<void> delStore(BuildContext context, int delIndex) async {
+    final ok=await showConfirmDialog(context, "deleteDownloader".tr, "${'deleteDownloader'.tr}: ${servers[delIndex].name}?", okText: 'delete'.tr);
+    if(ok){
+      statusGet.sevrerIndex.value=0;
+      servers.removeAt(delIndex);
+      if(starIndex>=servers.length){
+        setStar(0);
+      }
+      saveStore();
+    }
+  }
+
+  Future<void> showFreqDialog(BuildContext context) async {
+    freq.value=await freqDialogContent(context, freq.value);
+    prefs.setInt("freq", freq.value);
+  }
+
+  void setStar(int index){
+    starIndex.value=index;
+    prefs.setInt("star", index);
+  }
+}

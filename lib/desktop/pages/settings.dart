@@ -1,0 +1,258 @@
+import 'package:bitflow_web/components/dialogs.dart';
+import 'package:bitflow_web/components/header/header.dart';
+import 'package:bitflow_web/components/settings/setting_components.dart';
+import 'package:bitflow_web/components/settings/setting_item.dart';
+import 'package:bitflow_web/getx/status_get.dart';
+import 'package:bitflow_web/getx/store_get.dart';
+import 'package:bitflow_web/getx/theme_get.dart';
+import 'package:bitflow_web/service/funcs.dart';
+import 'package:clipboard/clipboard.dart';
+import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:get/get.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({super.key});
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+
+  String version="";
+  final StoreGet storeGet=Get.find();
+  final FuncsService funcsService=Get.find();
+  final StatusGet statusGet=Get.find();
+  final ThemeGet themeGet=Get.find();
+  final SettingComponents settingComponents=SettingComponents();
+
+  late SharedPreferences prefs;
+
+  Future<void> init() async {
+    // 初始化prefs
+    prefs=await SharedPreferences.getInstance();
+
+    // 获取版本号
+    PackageInfo packageInfo = await PackageInfo.fromPlatform();
+    setState(() {
+      version="v${packageInfo.version}";
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    init();
+  }
+
+  bool hoverVersion=false;
+  bool hoverFreq=false;
+  bool hoverConfig=false;
+  bool hoverDark=false;
+  bool hoverUrl=false;
+  bool hoverLang=false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Header(name: 'settings'.tr, page: Pages.settings,),
+        Expanded(
+          child: ListView(
+            children: [
+              SettingItem(
+                label: 'updateFrequency'.tr, 
+                child: GestureDetector(
+                  onTap: () async {
+                    int oldFreq=storeGet.freq.value;
+                    await storeGet.showFreqDialog(context);
+                    if(oldFreq!=storeGet.freq.value){
+                      funcsService.reLoadService();
+                      return;
+                    }
+                  },
+                  child: MouseRegion(
+                    onEnter: (_)=>setState(() {
+                      hoverFreq=true;
+                    }),
+                    onExit: (_)=>setState(() {
+                      hoverFreq=false;
+                    }),
+                    child: AnimatedDefaultTextStyle(
+                      style: TextStyle(
+                        color: hoverFreq ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.primary.withAlpha(180)
+                      ), 
+                      duration: const Duration(milliseconds: 200),
+                      child: Obx(()=> Text("${storeGet.freq.value.toString()} 毫秒"))
+                    ),
+                  ),
+                )
+              ),
+              Obx(()=>
+                SettingDropDownItem(
+                  selected: storeGet.defaultActiveOrder.value,
+                  label: "defaultActiveOrder".tr, 
+                  selectedIcon: orderToIcon(storeGet.defaultActiveOrder.value), 
+                  selectedText: orderToString(storeGet.defaultActiveOrder.value), 
+                  func: (val){
+                    val=val as OrderTypes;
+                    storeGet.defaultActiveOrder.value=val;
+                    prefs.setInt("defaultActiveOrder", val.index);
+                  }, 
+                  list: OrderTypes.values.map((item)=>CustomDropDownItem(orderToString(item), item, orderToIcon(item))).toList()
+                ),
+              ),
+              Obx(()=>
+                SettingDropDownItem(
+                  selected: storeGet.defaultFinishOrder.value,
+                  label: "defaultFinishedOrder".tr, 
+                  selectedIcon: orderToIcon(storeGet.defaultFinishOrder.value), 
+                  selectedText: orderToString(storeGet.defaultFinishOrder.value), 
+                  func: (val){
+                    val=val as OrderTypes;
+                    storeGet.defaultFinishOrder.value=val;
+                    prefs.setInt("defaultFinishOrder", val.index);
+                  }, 
+                  list: OrderTypes.values.map((item)=>CustomDropDownItem(orderToString(item), item, orderToIcon(item))).toList()
+                ),
+              ),
+              Obx(()=>
+                SettingItem(
+                  label: 'downloaderURL'.tr, 
+                  child: MouseRegion(
+                    onEnter: (_)=>setState(() {
+                      hoverUrl=true;
+                    }),
+                    onExit: (_)=>setState(() {
+                      hoverUrl=false;
+                    }),
+                    child: GestureDetector(
+                      onTap: () async {
+                        await FlutterClipboard.copy(storeGet.servers[statusGet.sevrerIndex.value].url);
+                      },
+                      child: Tooltip(
+                        message: storeGet.servers.isEmpty ? "" : "${storeGet.servers[statusGet.sevrerIndex.value].url}\n ${'clickToCopy'.tr}",
+                        child: AnimatedDefaultTextStyle(
+                          style: TextStyle(
+                            color: hoverUrl ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.primary.withAlpha(180)
+                          ),
+                          duration: const Duration(milliseconds: 200),
+                          child: Text(
+                            storeGet.servers.isEmpty ? "" : storeGet.servers[statusGet.sevrerIndex.value].url,
+                            overflow: TextOverflow.ellipsis,
+                          )
+                        ),
+                      ),
+                    ),
+                  )
+                )
+              ),
+              SettingItem(
+                label: "downloaderConfig".tr, 
+                child: GestureDetector(
+                  onTap: ()=>settingComponents.downloaderConfig(context),
+                  child: MouseRegion(
+                    onEnter: (_)=>setState(() {
+                      hoverConfig=true;
+                    }),
+                    onExit: (_)=>setState(() {
+                      hoverConfig=false;
+                    }),
+                    child: AnimatedDefaultTextStyle(
+                      style: TextStyle(
+                        color: hoverConfig ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.primary.withAlpha(180)
+                      ), 
+                      duration: const Duration(milliseconds: 200),
+                      child: Obx(()=>Text("config".trParams({"downloader": storeGet.servers.isEmpty ? "" : funcsService.convertType(storeGet.servers[statusGet.sevrerIndex.value].type)}))),
+                    ),
+                  ),
+                )
+              ),
+              SettingItem(
+                label: "darkMode".tr, 
+                child: GestureDetector(
+                  onTap: ()=>themeGet.showDarkModeDialog(context),
+                  child: MouseRegion(
+                    onEnter: (_)=>setState(() {
+                      hoverDark=true;
+                    }),
+                    onExit: (_)=>setState(() {
+                      hoverDark=false;
+                    }),
+                    child: AnimatedDefaultTextStyle(
+                      style: TextStyle(
+                        color: hoverDark ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.primary.withAlpha(180)
+                      ), 
+                      duration: const Duration(milliseconds: 200),
+                      child: Obx(() => Text(themeGet.autoDark.value ? "auto".tr : themeGet.darkMode.value ? "dark".tr : "light".tr))
+                    ),
+                  ),
+                )
+              ),
+              Obx(()=>
+                SettingItem(
+                  label: 'language'.tr, 
+                  child: GestureDetector(
+                    onTap: ()=>languageDialog(context),
+                    child: MouseRegion(
+                      onEnter: (_)=>setState(() {
+                        hoverLang=true;
+                      }),
+                      onExit: (_)=>setState(() {
+                        hoverLang=false;
+                      }),
+                      child: AnimatedDefaultTextStyle(
+                        style: TextStyle(
+                          color: hoverLang ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.primary.withAlpha(180)
+                        ), 
+                        duration: const Duration(milliseconds: 200),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            FaIcon(
+                              FontAwesomeIcons.globe,
+                              size: 14,
+                            ),
+                            const SizedBox(width: 10,),
+                            Text(statusGet.lang.value.name),
+                          ],
+                        ),
+                      ),
+                    )
+                  ),
+                ),
+              ),
+              SettingItem(
+                label: "${'about'.tr} BitFlow",
+                showDivider: false, 
+                child: GestureDetector(
+                  onTap: ()=>showAbout(context),
+                  child: MouseRegion(
+                    onEnter: (_)=>setState(() {
+                      hoverVersion=true;
+                    }),
+                    onExit: (_)=>setState(() {
+                      hoverVersion=false;
+                    }),
+                    // child: Text(version)
+                    child: AnimatedDefaultTextStyle(
+                      style: TextStyle(
+                        color: hoverVersion ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.primary.withAlpha(180)
+                      ), 
+                      duration: const Duration(milliseconds: 200),
+                      child: Text(version)
+                    ),
+                  )
+                ),
+              ),
+            ],
+          )
+        )
+      ],
+    );
+  }
+}
