@@ -64,7 +64,7 @@ BitFlow Web 是 [BitFlow](https://github.com/Zhoucheng133/BitFlow) 的 Web 分�
 
 4. **构建生产版本**
    ```bash
-   flutter build web
+   flutter build web --release
    ```
    若需部署到指定子路径（如 GitHub Pages 的 `/BitFlow-Web/`），请在构建时指定 `--base-href`：
    ```bash
